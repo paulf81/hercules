@@ -215,14 +215,19 @@ class Wind_MesoToPowerPrecomFloris(ComponentBase):
         self.wd_mat_mean = df_wi["wd_mean"].values.astype(hercules_float_type)
 
         if "ti_000" in df_wi.columns:
-            self.ti_mat = df_wi[[f"ti_{t_idx:03d}" for t_idx in range(self.n_turbines)]].to_numpy(
+            # Extract TI data temporarily to compute mean and initial values
+            ti_mat_temp = df_wi[[f"ti_{t_idx:03d}" for t_idx in range(self.n_turbines)]].to_numpy(
                 dtype=hercules_float_type
             )
 
             # Compute the turbine averaged turbulence intensities (axis = 1) using mean
-            self.ti_mat_mean = np.mean(self.ti_mat, axis=1, dtype=hercules_float_type)
+            self.ti_mat_mean = np.mean(ti_mat_temp, axis=1, dtype=hercules_float_type)
 
-            self.initial_tis = self.ti_mat[0, :]
+            # Store initial TI values
+            self.initial_tis = ti_mat_temp[0, :]
+
+            # Delete temporary ti_mat to free memory (not needed after extracting mean and initial)
+            del ti_mat_temp
 
         else:
             self.ti_mat_mean = 0.08 * np.ones_like(self.ws_mat_mean, dtype=hercules_float_type)
@@ -249,77 +254,106 @@ class Wind_MesoToPowerPrecomFloris(ComponentBase):
             start = max(0, idx - win + 1)
             return circmean(arr_1d[start : idx + 1], high=360.0, low=0.0, nan_policy="omit")
 
-        ws_eval = np.array(
-            [window_mean(self.ws_mat_mean, i, update_steps) for i in eval_indices],
-            dtype=hercules_float_type,
-        )
-        wd_eval = np.array(
-            [window_circmean(self.wd_mat_mean, i, update_steps) for i in eval_indices],
-            dtype=hercules_float_type,
-        )
-        if np.isscalar(self.ti_mat_mean):
-            ti_eval = self.ti_mat_mean * np.ones_like(ws_eval, dtype=hercules_float_type)
-        else:
-            ti_eval = np.array(
-                [window_mean(self.ti_mat_mean, i, update_steps) for i in eval_indices],
+        # Allocate the final wind_speeds_withwakes_all array upfront
+        # This will be filled in-place during chunked processing
+        self.wind_speeds_withwakes_all = self.ws_mat.copy()
+
+        # Process FLORIS evaluations in chunks to reduce peak memory usage
+        # Chunk size determines how many FLORIS evaluation points to process at once
+        # Smaller chunks = lower peak memory but more iterations
+        # Adaptive chunk size based on available memory and simulation size
+        n_eval = len(eval_indices)
+        # Target ~100-200 chunks for very long simulations, fewer for short ones
+        # This balances memory reduction with computational overhead
+        chunk_size = max(100, min(1000, n_eval // 5))  # 100-1000 evaluations per chunk
+        n_chunks = int(np.ceil(n_eval / chunk_size))
+
+        self.logger.info(f"Processing {n_eval} FLORIS evaluations in {n_chunks} chunk(s)...")
+
+        # Track the last processed index across chunks
+        prev_end_global = -1
+
+        for chunk_idx in range(n_chunks):
+            # Determine chunk boundaries
+            chunk_start = chunk_idx * chunk_size
+            chunk_end = min((chunk_idx + 1) * chunk_size, n_eval)
+            chunk_eval_indices = eval_indices[chunk_start:chunk_end]
+
+            # Compute windowed means for this chunk
+            ws_eval_chunk = np.array(
+                [window_mean(self.ws_mat_mean, i, update_steps) for i in chunk_eval_indices],
                 dtype=hercules_float_type,
             )
+            wd_eval_chunk = np.array(
+                [window_circmean(self.wd_mat_mean, i, update_steps) for i in chunk_eval_indices],
+                dtype=hercules_float_type,
+            )
+            if np.isscalar(self.ti_mat_mean):
+                ti_eval_chunk = self.ti_mat_mean * np.ones_like(
+                    ws_eval_chunk, dtype=hercules_float_type
+                )
+            else:
+                ti_eval_chunk = np.array(
+                    [window_mean(self.ti_mat_mean, i, update_steps) for i in chunk_eval_indices],
+                    dtype=hercules_float_type,
+                )
 
-        # Evaluate FLORIS at the evaluation cadence
-        self.fmodel.set(
-            wind_directions=wd_eval,
-            wind_speeds=ws_eval,
-            turbulence_intensities=ti_eval,
-        )
-        self.logger.info("Running FLORIS...")
-        self.fmodel.run()
-        self.num_floris_calcs = 1
-        self.logger.info("FLORIS run complete")
+            # Run FLORIS for this chunk
+            self.fmodel.set(
+                wind_directions=wd_eval_chunk,
+                wind_speeds=ws_eval_chunk,
+                turbulence_intensities=ti_eval_chunk,
+            )
+            self.fmodel.run()
+            self.num_floris_calcs += 1
 
-        # TODO: THIS CODE WILL WORK IN THE FUTURE
-        # https://github.com/NREL/floris/pull/1135
-        # floris_velocities = (
-        #     self.fmodel.turbine_average_velocities
-        # )  # This is a 2D array of shape (len(wind_directions), n_turbines)
 
-        # For now compute in place here (replace later)
-        expanded_velocities = average_velocity(
-            velocities=self.fmodel.fmodel_expanded.core.flow_field.u,
-            method=self.fmodel.fmodel_expanded.core.grid.average_method,
-            cubature_weights=self.fmodel.fmodel_expanded.core.grid.cubature_weights,
-        )
+            # TODO: THIS CODE WILL WORK IN THE FUTURE
+            # https://github.com/NREL/floris/pull/1135
+            # floris_velocities = (
+            #     self.fmodel.turbine_average_velocities
+            # )  # This is a 2D array of shape (len(wind_directions), n_turbines)
+            # Extract velocities for this chunk
+            expanded_velocities = average_velocity(
+                velocities=self.fmodel.fmodel_expanded.core.flow_field.u,
+                method=self.fmodel.fmodel_expanded.core.grid.average_method,
+                cubature_weights=self.fmodel.fmodel_expanded.core.grid.cubature_weights,
+            )
 
-        floris_velocities = map_turbine_powers_uncertain(
-            unique_turbine_powers=expanded_velocities,
-            map_to_expanded_inputs=self.fmodel.map_to_expanded_inputs,
-            weights=self.fmodel.weights,
-            n_unexpanded=self.fmodel.n_unexpanded,
-            n_sample_points=self.fmodel.n_sample_points,
-            n_turbines=self.fmodel.n_turbines,
-        ).astype(hercules_float_type)
+            floris_velocities_chunk = map_turbine_powers_uncertain(
+                unique_turbine_powers=expanded_velocities,
+                map_to_expanded_inputs=self.fmodel.map_to_expanded_inputs,
+                weights=self.fmodel.weights,
+                n_unexpanded=self.fmodel.n_unexpanded,
+                n_sample_points=self.fmodel.n_sample_points,
+                n_turbines=self.fmodel.n_turbines,
+            ).astype(hercules_float_type)
 
-        # Determine the free_stream velocities as the maximum velocity in each row
-        # of floris velocities.  Make sure to keep shape (len(wind_directions), n_turbines)
-        # by repeating the maximum velocity accross each column for each row
-        free_stream_velocities = np.tile(
-            np.max(floris_velocities, axis=1)[:, np.newaxis], (1, self.n_turbines)
-        ).astype(hercules_float_type)
+            # Compute free stream velocities and wake deficits for this chunk
+            free_stream_velocities_chunk = np.tile(
+                np.max(floris_velocities_chunk, axis=1)[:, np.newaxis], (1, self.n_turbines)
+            ).astype(hercules_float_type)
+            wake_deficits_chunk = free_stream_velocities_chunk - floris_velocities_chunk
 
-        # Compute wake deficits at evaluation times
-        floris_wake_deficits_eval = free_stream_velocities - floris_velocities
+            # Write deficits directly into wind_speeds_withwakes_all for this chunk
+            # Process each evaluation point in this chunk
+            for local_idx, eval_idx in enumerate(chunk_eval_indices):
+                start_idx = prev_end_global + 1
+                end_idx = eval_idx
+                prev_end_global = eval_idx
+                # Subtract deficits from background wind speeds in-place
+                self.wind_speeds_withwakes_all[start_idx : end_idx + 1, :] -= wake_deficits_chunk[
+                    local_idx, :
+                ]
 
-        # Expand the wake deficits to all time steps by holding constant within each interval
-        deficits_all = np.zeros_like(self.ws_mat, dtype=hercules_float_type)
-        # For each block, fill with the corresponding deficits
-        prev_end = -1
-        for block_idx, end_idx in enumerate(eval_indices):
-            start_idx = prev_end + 1
-            prev_end = end_idx
-            # Use deficits from this evaluation time for the whole block
-            deficits_all[start_idx : end_idx + 1, :] = floris_wake_deficits_eval[block_idx, :]
+            # Explicitly delete intermediate arrays to free memory before next iteration
+            del ws_eval_chunk, wd_eval_chunk, ti_eval_chunk
+            del expanded_velocities, floris_velocities_chunk
+            del free_stream_velocities_chunk, wake_deficits_chunk
 
-        # Compute all the withwakes wind speeds from background minus deficits
-        self.wind_speeds_withwakes_all = self.ws_mat - deficits_all
+        # Reset num_floris_calcs to reflect actual count (was incremented in loop)
+        self.num_floris_calcs = n_chunks
+        self.logger.info(f"FLORIS precomputation complete ({n_chunks} chunk(s) processed)")
 
         # Initialize the turbine powers to nan
         self.turbine_powers = np.zeros(self.n_turbines, dtype=hercules_float_type) * np.nan
