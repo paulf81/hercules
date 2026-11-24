@@ -83,6 +83,25 @@ def compute_cycle_count_equivalent_annual(
     return _annualize(ho, total, hours_per_year)
 
 
+def _SOC_trajectory(ho: HerculesOutput, component: str) -> np.ndarray:
+    """Return the logged SOC, prefixed with the initial SOC if ``ho`` starts at step 0.
+
+    SOC is logged after each step, so the first interval's change needs the initial SOC.
+
+    Args:
+        ho (HerculesOutput): Hercules output.
+        component (str): Storage component name.
+
+    Returns:
+        np.ndarray: SOC values (fraction).
+    """
+    _require_default_index(ho)
+    SOC = _get_column(ho, f"{component}.SOC")
+    if ho.df["step"].iloc[0] == 0:
+        SOC = np.insert(SOC, 0, ho.metadata["h_dict"][component]["initial_conditions"]["SOC"])
+    return SOC
+
+
 def compute_cycle_count_equivalent_SOC_total(
     ho: HerculesOutput, component: str = "battery"
 ) -> float:
@@ -99,8 +118,7 @@ def compute_cycle_count_equivalent_SOC_total(
     Returns:
         float: SOC-based equivalent full cycles over the simulation.
     """
-    _require_default_index(ho)
-    SOC = _get_column(ho, f"{component}.SOC")
+    SOC = _SOC_trajectory(ho, component)
     return float(-np.minimum(np.diff(SOC), 0.0).sum())
 
 
@@ -133,8 +151,7 @@ def compute_SOC_mileage_total(ho: HerculesOutput, component: str = "battery") ->
     Returns:
         float: SOC mileage over the simulation (SOC fraction).
     """
-    _require_default_index(ho)
-    SOC = _get_column(ho, f"{component}.SOC")
+    SOC = _SOC_trajectory(ho, component)
     return float(np.abs(np.diff(SOC)).sum())
 
 
@@ -228,8 +245,7 @@ def compute_rainflow_damage_total(
     Returns:
         float: Cycle damage over the simulation.
     """
-    _require_default_index(ho)
-    cycles = _rainflow_cycles(_get_column(ho, f"{component}.SOC"))
+    cycles = _rainflow_cycles(_SOC_trajectory(ho, component))
     return float(sum(count * depth**depth_exponent for depth, _, count in cycles))
 
 

@@ -7,7 +7,11 @@ from tests.test_inputs.analysis_output import build_hercules_output
 
 H_DICT = {
     "plant": {"interconnect_limit": 1000.0},
-    "battery": {"component_type": "BatteryReservoir", "energy_capacity": 200.0},
+    "battery": {
+        "component_type": "BatteryReservoir",
+        "energy_capacity": 200.0,
+        "initial_conditions": {"SOC": 0.5},
+    },
 }
 
 
@@ -41,14 +45,33 @@ def test_SOC_metrics(tmp_path):
 
 
 def test_rainflow_damage(tmp_path):
-    # SOC 0 -> 0.5 -> 0.3 -> 0.6 -> 0: one closed 0.2 cycle and two 0.6 half cycles,
+    # SOC 0 -> 0 -> 0.5 -> 0.3 -> 0.6 -> 0: one closed 0.2 cycle and two 0.6 half cycles,
     # so damage = 0.2**2 + 2 * 0.5 * 0.6**2 = 0.4.
+    h_dict = {"battery": {**H_DICT["battery"], "initial_conditions": {"SOC": 0.0}}}
     ho = build_hercules_output(
         tmp_path,
         {"battery.power": [0.0] * 5, "battery.SOC": [0.0, 0.5, 0.3, 0.6, 0.0]},
-        H_DICT,
+        h_dict,
         dt=3600.0,
     )
     assert storage.compute_rainflow_damage_total(ho) == pytest.approx(0.4)
     assert storage.compute_rainflow_damage_total(ho, depth_exponent=1.0) == pytest.approx(0.8)
     assert storage.compute_rainflow_damage_annual(ho) == pytest.approx(0.4 * 8760 / 5)
+
+
+def test_SOC_metrics_include_initial_SOC(tmp_path):
+    # SOC is logged after each step, so a one-step discharge from initial SOC 1 to 0 is
+    # counted; a selection starting after step 0 does not prepend the initial SOC.
+    h_dict = {"battery": {**H_DICT["battery"], "initial_conditions": {"SOC": 1.0}}}
+    ho = build_hercules_output(
+        tmp_path,
+        {"battery.power": [0.0, 0.0], "battery.SOC": [0.0, 0.0]},
+        h_dict,
+        dt=3600.0,
+    )
+    assert storage.compute_cycle_count_equivalent_SOC_total(ho) == pytest.approx(1.0)
+    assert storage.compute_SOC_mileage_total(ho) == pytest.approx(1.0)
+    assert storage.compute_rainflow_damage_total(ho) == pytest.approx(0.5)
+
+    ho.df = ho.df.iloc[1:].reset_index(drop=True)
+    assert storage.compute_cycle_count_equivalent_SOC_total(ho) == pytest.approx(0.0)
