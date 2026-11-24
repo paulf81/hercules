@@ -267,7 +267,7 @@ with logged channels. Dollar amounts end in `_USD`.
 | Name | Kind | Description |
 |---|---|---|
 | `analysis.plant.power_export_POI_limited` | analysis column | `plant.power_export` limited to `plant.interconnect_limit` |
-| `analysis.plant.power_export_POI_excess` | analysis column | Power removed at the POI (kW) |
+| `analysis.plant.power_export_POI_excess` | analysis column | Power curtailed at the POI (kW) |
 | `analysis.<component>.power_POI_limited` | analysis column | Component `power` after its share of the POI cut |
 | `analysis.<name>_revenue_DA`, `analysis.<name>_revenue_RT` | analysis column | Per-step two-settlement revenue ($) of power column `<name>` |
 | `analysis.is_peak` | analysis column | 1 inside a region's forecast daily peak-load blocks (MISO) |
