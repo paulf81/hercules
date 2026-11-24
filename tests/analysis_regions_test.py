@@ -45,6 +45,16 @@ def test_miso_is_peak_column(tmp_path):
     np.testing.assert_array_equal(ho.df["analysis.is_peak"], [0, 1, 1, 1, 1, 0])
 
 
+def test_miso_is_peak_column_outside_data_raises(tmp_path):
+    # A simulation with no peak-load data must fail rather than report all non-peak.
+    start = pd.Timestamp("2100-01-01T00:00Z").timestamp()
+    ho = build_hercules_output(
+        tmp_path, {"solar.power": [0.0] * 2}, H_DICT, dt=3600.0, starttime_utc=start
+    )
+    with pytest.raises(ValueError, match="No peak-load data"):
+        miso.add_is_peak_column(ho, zone=8)
+
+
 def test_miso_RA_hour_columns(tmp_path):
     # 2023-06-19 20:00 UTC is a summer RA hour in the south subregion only.
     start = pd.Timestamp("2023-06-19T20:00Z").timestamp()

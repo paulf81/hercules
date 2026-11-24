@@ -37,7 +37,8 @@ def add_is_peak_column(ho: HerculesOutput, zone: int, region: dict | None = None
         HerculesOutput: ``ho`` with ``analysis.is_peak`` added.
 
     Raises:
-        ValueError: If the zone is unknown or has no peak-load times.
+        ValueError: If the zone is unknown or peak-load data does not cover every
+            simulated market day.
     """
     _require_default_index(ho)
     region = region or load_region("miso")
@@ -47,8 +48,18 @@ def add_is_peak_column(ho: HerculesOutput, zone: int, region: dict | None = None
     if starts.empty:
         raise ValueError(f"No peak-load times for peak zone '{peak_zone}'.")
 
+    tz = datetime.timezone(datetime.timedelta(hours=region["market_time_offset_hours"]))
+    time_index = pd.DatetimeIndex(ho.df["time_utc"]).as_unit("ns")
+    sim_days = time_index.tz_convert(tz).normalize().unique()
+    missing = sim_days[~sim_days.isin(starts.tz_convert(tz).normalize())]
+    if not missing.empty:
+        raise ValueError(
+            f"No peak-load data for peak zone '{peak_zone}' on {len(missing)} market day(s), "
+            f"first {missing[0].date()}."
+        )
+
     starts = starts.as_unit("ns").asi8
-    times = pd.DatetimeIndex(ho.df["time_utc"]).as_unit("ns").asi8
+    times = time_index.asi8
     block_ns = int(region["peak_block_duration_hours"] * 3600 * 10**9)
     idx = np.searchsorted(starts, times, side="right") - 1
     in_block = (idx >= 0) & (times < starts[np.maximum(idx, 0)] + block_ns)

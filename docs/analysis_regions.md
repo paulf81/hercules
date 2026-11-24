@@ -41,7 +41,8 @@ seasonal values from a region module.
 ## MISO
 
 - `miso.add_is_peak_column(ho, zone)` adds `analysis.is_peak`: 1 inside the 4 h block
-  starting at each day's forecast (MTLF) peak-load hour of the zone.
+  starting at each day's forecast (MTLF) peak-load hour of the zone. Raises if any
+  simulated market day has no peak-load data.
 - `miso.add_RA_hour_columns(ho, zone)` adds `analysis.season` (by the date in EST),
   `analysis.RA_hour` and `analysis.AAOC_hour` for the zone's subregion; NaN outside
   `RA_hours_coverage_utc`.
