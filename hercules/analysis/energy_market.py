@@ -290,8 +290,13 @@ def compute_revenue_TBX_total(
 
     Returns:
         float: TBX revenue over the simulation ($).
+
+    Raises:
+        ValueError: If ``block_minutes`` is shorter than the simulation time step.
     """
     _require_default_index(ho)
+    if block_minutes * 60 < float(ho.metadata["dt_sim"]):
+        raise ValueError("block_minutes must not be shorter than the simulation time step.")
     times = pd.DatetimeIndex(ho.df["time_utc"])
     if day_timezone is not None:
         times = times.tz_convert(day_timezone)

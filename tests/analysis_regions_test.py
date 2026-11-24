@@ -87,3 +87,39 @@ def test_miso_shared_POI_accreditation(tmp_path):
         ho, 8, "solar", storage_available_columns={"battery": "controller.battery.offer_RT"}
     )
     assert solar["summer"] == pytest.approx(fractions["solar"]["summer"] * 0.1)
+
+    # Zone 1 has no RA hour here; stale zone 1 columns must not be reused for zone 8.
+    miso.add_RA_hour_columns(ho, zone=1)
+    solar = miso.compute_capacity_accredited_seasonal_MW(ho, 8, "solar")
+    assert solar["summer"] == pytest.approx(fractions["solar"]["summer"] * 0.1 * 0.625)
+
+
+def test_miso_shared_POI_bus_side_and_multiple_storage(tmp_path):
+    # At 0.8 efficiency the 100 kW POI is 125 kW at the bus: solar keeps min(80, 75) / 80.
+    # Two 100 kW batteries share that 125 kW, so each keeps 125 / 200 of its class value.
+    start = pd.Timestamp("2023-06-19T20:00Z").timestamp()
+    battery = {"component_type": "BatteryReservoir", "power_discharge_max": 100.0}
+    h_dict = {
+        "plant": {"interconnect_limit": 100.0, "efficiency_bus_to_poi": 0.8},
+        "solar": H_DICT["solar"],
+        "battery_1": battery,
+        "battery_2": battery,
+    }
+    columns = {"solar.power_hypothetical": [80.0], "controller.offer": [25.0]}
+    ho = build_hercules_output(tmp_path, columns, h_dict, starttime_utc=start)
+    fractions = load_region("miso")["accreditation_fraction"]
+
+    available = {"battery_1": "controller.offer", "battery_2": "controller.offer"}
+    solar = miso.compute_capacity_accredited_seasonal_MW(ho, 8, "solar", None, available)
+    assert solar["summer"] == pytest.approx(fractions["solar"]["summer"] * 0.1 * 0.9375)
+    battery = miso.compute_capacity_accredited_seasonal_MW(ho, 8, "battery_1")
+    assert battery["summer"] == pytest.approx(fractions["battery"]["summer"] * 0.1 * 0.625)
+
+
+def test_miso_shared_POI_outside_RA_coverage_raises(tmp_path):
+    # Without RA-hour data the shared-POI rule cannot be applied.
+    start = pd.Timestamp("2100-06-19T20:00Z").timestamp()
+    columns = {"solar.power_hypothetical": [80.0]}
+    ho = build_hercules_output(tmp_path, columns, H_DICT, starttime_utc=start)
+    with pytest.raises(ValueError, match="RA-hour data"):
+        miso.compute_capacity_accredited_seasonal_MW(ho, 8, "solar")

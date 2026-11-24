@@ -106,6 +106,8 @@ def add_POI_limited_columns(
     first, in order (first entry cut first, as in Hycon's
     ``HybridSupervisoryControllerGeneric``). Any remaining cut is shared in proportion to
     each component's remaining positive power. Charging storage and loads are unchanged.
+    Component columns are then moved to the POI side (times the efficiency when the plant
+    exports, divided by it when it imports), so they sum to the limited export.
 
     Adds (in kW) ``analysis.plant.power_export_POI_limited``,
     ``analysis.plant.power_export_POI_excess`` and ``analysis.<component>.power_POI_limited``
@@ -157,10 +159,12 @@ def add_POI_limited_columns(
     for c in components:
         power[c] -= np.maximum(power[c], 0.0) * share
 
+    bus = sum(power.values())
+    to_POI = np.where(bus >= 0, efficiency, 1.0 / efficiency)
     ho.df[POWER_EXPORT_POI_LIMITED] = export - excess
     ho.df[POWER_EXPORT_POI_EXCESS] = excess
     for c in components:
-        ho.df[f"analysis.{c}.power_POI_limited"] = power[c]
+        ho.df[f"analysis.{c}.power_POI_limited"] = power[c] * to_POI
 
     removed_MWh = excess.sum() * _dt_hours(ho) / 1000.0
     exported_MWh = np.maximum(export, 0.0).sum() * _dt_hours(ho) / 1000.0
@@ -221,15 +225,17 @@ def add_columns(
 
 
 def compute_simulation_hours(ho: HerculesOutput) -> float:
-    """Return the simulated duration in hours.
+    """Return the duration represented by the rows of ``ho.df`` in hours.
+
+    Uses the row count, so a filtered ``ho.df`` gives the duration of the selection.
 
     Args:
         ho (HerculesOutput): Hercules output.
 
     Returns:
-        float: Simulated duration in hours.
+        float: Duration in hours.
     """
-    return float(ho.metadata["total_simulation_time"]) / 3600.0
+    return len(ho.df) * _dt_hours(ho)
 
 
 def compute_energy_MWh_column(

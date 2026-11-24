@@ -31,8 +31,9 @@ See example 05 (`analyze_outputs.py`) for a complete script.
    `plant.efficiency_bus_to_poi` and taken only from components with positive power. It is
    distributed by an explicit `curtailment_order`, else the order logged by Hycon's
    supervisory controller (`controller.<name>.curtailment_rank_<component>`), else in
-   proportion to positive power. A warning is raised when the removed energy exceeds
-   `warn_fraction` of the exported energy.
+   proportion to positive power. Component columns are then moved to the POI side with the
+   same efficiency, so they sum to the limited export. A warning is raised when the removed
+   energy exceeds `warn_fraction` of the exported energy.
 3. **Delivered vs physical.** Energy, revenue, capacity factor, capacity market and ENPAX
    functions use the POI-limited columns (and add them if missing). Storage metrics use the
    raw logged signals, since the POI cut does not change what the equipment did.
@@ -42,19 +43,7 @@ See example 05 (`analyze_outputs.py`) for a complete script.
    LMPs $/MWh, money `_USD`. Default column names are used only for Hercules channels;
    controller columns (`controller.<name>.<signal>`) are passed explicitly.
 5. **Annual values** scale the simulation total by `hours_per_year` (default 8760) over the
-   simulated hours.
-
-## Modules
-
-| Module | Contents |
-|---|---|
-| `utilities` | POI limiting, `add_columns`, simulation hours, energy (MWh), capacity factor |
-| `storage` | Energy discharged, equivalent cycles (energy and SOC based), SOC mileage, mean SOC, rainflow damage |
-| `energy_market` | RT, DA and two-settlement revenue; TBX arbitrage benchmark |
-| `capacity_market` | Accredited capacity (class fraction x rating) and capacity revenue from region data |
-| `regions` | `load_region` and region rules (`regions.miso`), see [Analysis regions](analysis_regions) |
-| `plotting` | `plot_timeseries_plotly` |
-| `enpax` | Case block for the ENPAX cost workflow, see [ENPAX hand-off](analysis_enpax) |
+   hours represented by the rows of `ho.df`.
 
 ## Energy market
 
@@ -70,11 +59,13 @@ See example 05 (`analyze_outputs.py`) for a complete script.
   `block_minutes` blocks (60 for the published hourly TBX, 5 for sub-hourly RT); each day
   discharges in the most expensive `duration_hours` and charges in the cheapest
   `duration_hours / roundtrip_efficiency`. Days with too few blocks are dropped, and with
-  `allow_skip` negative days earn 0. `day_timezone` sets the calendar day.
+  `allow_skip` negative days earn 0. `day_timezone` sets the calendar day. `block_minutes`
+  shorter than the simulation time step raises.
 
 ## Plotting
 
 `plotting.plot_timeseries_plotly(ho, columns, ...)` draws one row per entry of `columns` (a
 list entry shares a row), then plant export with its POI-limited value and the interconnect
 limit, then the LMPs. `shade_columns` shades 0/1 columns (e.g. a logged peak flag) over all
-rows. Long simulations are subsampled to at most 20000 points unless `plot_dt` is given.
+rows; NaN is not shaded. Long simulations are subsampled to at most 20000 points unless
+`plot_dt` is given; shading uses the full-resolution data.

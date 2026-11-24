@@ -22,8 +22,8 @@ MAX_POINTS = 20000
 
 
 def _shading_shapes(times: pd.Series, flags: pd.Series, color: str) -> list[dict]:
-    """Return one translucent full-height rectangle per run of 1s in ``flags``."""
-    padded = np.concatenate(([0], flags.to_numpy().astype(bool).astype(int), [0]))
+    """Return one translucent full-height rectangle per run of 1s in ``flags`` (NaN is 0)."""
+    padded = np.concatenate(([0], (flags.to_numpy() == 1).astype(int), [0]))
     edges = np.diff(padded)
     x = times.to_numpy()
     shapes = []
@@ -76,7 +76,8 @@ def plot_timeseries_plotly(
         LMP_columns (tuple[str, ...]): LMP columns ($/MWh) for the price row. Defaults to
             ``external_signals.LMP_DA`` and ``external_signals.LMP_RT``.
         shade_columns (dict[str, str] | None): 0/1 columns to shade over all rows, mapped to
-            a color, e.g. ``{"controller.battery.in_peak": "gold"}``. Defaults to None.
+            a color, e.g. ``{"controller.battery.in_peak": "gold"}``. NaN is not shaded.
+            Defaults to None.
         height_per_row (int): Figure height per row (px). Defaults to 250.
         title (str | None): Figure title. Defaults to None.
         save_file (str | None): HTML file to write. Defaults to None.
@@ -110,6 +111,9 @@ def plot_timeseries_plotly(
         df = df[(times >= start) & (times < end)]
         if df.empty:
             raise ValueError(f"date_range {date_range} selects no rows.")
+    shapes = []
+    for column, color in shade_columns.items():
+        shapes += _shading_shapes(df["time_utc"], df[column], color)
     if plot_dt is None:
         stride = int(np.ceil(len(df) / MAX_POINTS))
     else:
@@ -128,9 +132,7 @@ def plot_timeseries_plotly(
         limit = ho.metadata["h_dict"]["plant"]["interconnect_limit"]
         fig.add_hline(y=limit, line_dash="dash", line_color="gray", row=len(columns) + 1, col=1)
 
-    shapes = []
     for column, color in shade_columns.items():
-        shapes += _shading_shapes(df["time_utc"], df[column], color)
         fig.add_trace(
             go.Scatter(x=[None], y=[None], mode="markers", name=column, marker_color=color),
             row=1,

@@ -6,8 +6,9 @@ START of each hour.
 
 The output csv file is written next to this script and tracked in the git repository.
 
-To generate a new csv file using updated data, drop spreadsheets of RA data
-into ``untracked_raw_files/``, run this script, then copy the printed coverage into
+To generate a new csv file using updated data, create ``untracked_raw_files/`` next to this
+script (it is git-ignored, see ``README.md`` for where the raw files are kept), put the MISO
+RA-hour spreadsheets in it, run this script, then copy the printed coverage into
 ``RA_hours_coverage_utc`` and the file names into ``sources`` in ``miso.yaml``.
 
 Output columns (one row per flagged hour, subregion and hour type):

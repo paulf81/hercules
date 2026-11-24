@@ -93,12 +93,25 @@ def test_POI_limit_charging_storage_unchanged(tmp_path):
 
 def test_POI_limit_bus_to_POI_efficiency(tmp_path):
     # 150 kW at the bus exports 120 kW at 0.8 efficiency; removing 20 kW at the POI
-    # takes 25 kW from the bus.
+    # takes 25 kW from the bus, and the component column is reported at the POI.
     plant = {"interconnect_limit": 100.0, "efficiency_bus_to_poi": 0.8}
     ho = build_hercules_output(tmp_path, {"solar.power": [150.0]}, {"plant": plant, "solar": SOLAR})
     utilities.add_POI_limited_columns(ho, warn_fraction=1.0)
     np.testing.assert_allclose(ho.df["analysis.plant.power_export_POI_limited"], [100.0])
-    np.testing.assert_allclose(ho.df["analysis.solar.power_POI_limited"], [125.0])
+    np.testing.assert_allclose(ho.df["analysis.solar.power_POI_limited"], [100.0])
+
+
+def test_POI_limit_components_sum_to_export_when_importing(tmp_path):
+    # Net import: 20 kW solar and -60 kW battery is -40 kW at the bus, -50 kW at the POI.
+    plant = {"interconnect_limit": 100.0, "efficiency_bus_to_poi": 0.8}
+    ho = build_hercules_output(
+        tmp_path,
+        {"solar.power": [20.0], "battery.power": [-60.0]},
+        {"plant": plant, "solar": SOLAR, "battery": BATTERY},
+    )
+    utilities.add_POI_limited_columns(ho)
+    np.testing.assert_allclose(ho.df["analysis.solar.power_POI_limited"], [25.0])
+    np.testing.assert_allclose(ho.df["analysis.battery.power_POI_limited"], [-75.0])
 
 
 def test_POI_limit_unknown_component_in_order_raises(tmp_path):
@@ -137,6 +150,11 @@ def test_energy_total_annual_and_simulation_hours(tmp_path):
     np.testing.assert_allclose(utilities.compute_energy_MWh_column(ho, "solar.power"), [1, 3])
     assert utilities.compute_energy_total_MWh(ho, "solar.power") == pytest.approx(4.0)
     assert utilities.compute_energy_annual_MWh(ho, "solar.power") == pytest.approx(17520.0)
+
+    # A one-hour selection is annualized over one hour, not the full run.
+    ho.df = ho.df.iloc[1:].reset_index(drop=True)
+    assert utilities.compute_simulation_hours(ho) == pytest.approx(1.0)
+    assert utilities.compute_energy_annual_MWh(ho, "solar.power") == pytest.approx(26280.0)
 
 
 def test_energy_hourly_column(tmp_path):

@@ -115,6 +115,10 @@ def test_revenue_TBX_sub_hourly_blocks(tmp_path):
     total = energy_market.compute_revenue_TBX_total(ho, 1000.0, block_minutes=5, **kwargs)
     assert total == pytest.approx(120.0)
 
+    # Blocks shorter than the 5 min time step would be empty.
+    with pytest.raises(ValueError, match="block_minutes"):
+        energy_market.compute_revenue_TBX_total(ho, 1000.0, block_minutes=1, **kwargs)
+
 
 def test_revenue_TBX_day_timezone(tmp_path):
     # 100 $/MWh from 02:00 to 06:00 UTC on 2024-01-01, which is 2023-12-31 in US/Central.

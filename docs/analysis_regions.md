@@ -48,14 +48,17 @@ seasonal values from a region module.
   `RA_hours_coverage_utc`.
 - `miso.compute_capacity_accredited_seasonal_MW(ho, zone, component)` applies MISO's
   hourly availability at a shared POI, with storage served first. Storage keeps the class
-  value; a generator sharing the POI with storage is scaled, per season over the RA hours in
+  value, scaled down if the storage components' combined `power_discharge_max` exceeds the
+  POI. A generator sharing the POI with storage is scaled, per season over the RA hours in
   the simulation, by
 
   $$\frac{\sum_h \min(P_h, \max(\mathrm{POI} - A_h, 0))}{\sum_h \min(P_h, \mathrm{POI})}$$
 
-  where $P_h$ is the hourly mean `power_hypothetical` of the generators and $A_h$ the
+  where $P_h$ is the hourly mean `power_hypothetical` of the generators, $A_h$ the
   storage's available discharge (rated `power_discharge_max`, or a logged column passed in
-  `storage_available_columns`).
+  `storage_available_columns`) and POI the interconnect limit converted to the bus with
+  `efficiency_bus_to_poi`. The zone's RA-hour columns are recomputed on each call, and the
+  generator case raises if they are NaN anywhere in the simulation.
 
 The MISO time series and the scripts that make them are in
 `hercules/analysis/regions/miso_data/` (see its README).

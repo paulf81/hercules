@@ -114,18 +114,21 @@ def compute_capacity_accredited_seasonal_MW(
     """Return MISO accredited capacity by season (MW), with hourly availability at a shared POI.
 
     Starts from the class-level value (``capacity_market``). MISO limits availability by hour,
-    with storage served first: storage keeps its class-level value, and a generator sharing
-    the POI with storage is scaled, per season, over the RA hours in the simulation by
+    with storage served first. Storage keeps its class-level value, scaled by
+    ``min(1, POI / sum of storage power_discharge_max)`` when several storage components share
+    the POI. A generator sharing the POI with storage is scaled, per season, over the RA hours
+    in the simulation by
 
         ratio = sum_h min(P_h, max(POI - A_h, 0)) / sum_h min(P_h, POI)
 
     where ``P_h`` is the hourly mean ``power_hypothetical`` of the generators (shared in
-    proportion between generators) and ``A_h`` the storage's available discharge. Seasons
-    without RA hours in the simulation keep the class-level value. Without storage the result
-    equals ``capacity_market.compute_capacity_accredited_seasonal_MW``.
+    proportion between generators), ``A_h`` the storage's available discharge and ``POI`` the
+    interconnect limit converted to the bus with ``efficiency_bus_to_poi``. Seasons without
+    RA hours in the simulation keep the class-level value. Without storage the result equals
+    ``capacity_market.compute_capacity_accredited_seasonal_MW``.
 
     Args:
-        ho (HerculesOutput): Hercules output.
+        ho (HerculesOutput): Hercules output; the zone's RA-hour columns are (re)added.
         zone (int): MISO local resource zone.
         component (str): Component name.
         region (dict | None): Region data. Defaults to ``load_region("miso")``.
@@ -135,6 +138,10 @@ def compute_capacity_accredited_seasonal_MW(
 
     Returns:
         dict[str, float]: Accredited capacity (MW) by season.
+
+    Raises:
+        ValueError: If a generator shares the POI with storage and the RA-hour data does not
+            cover the whole simulation.
     """
     region = region or load_region("miso")
     seasonal = capacity_market.compute_capacity_accredited_seasonal_MW(ho, region, component)
@@ -144,26 +151,36 @@ def compute_capacity_accredited_seasonal_MW(
         for c in _component_names(ho)
     }
     storage = [c for c, resource_class in classes.items() if resource_class == "battery"]
-    if component in storage or not storage:
+    if not storage:
         return seasonal
+    plant = h_dict["plant"]
+    POI = float(plant["interconnect_limit"]) / float(plant.get("efficiency_bus_to_poi", 1.0))
+    if component in storage:
+        storage_rated = sum(float(h_dict[s]["power_discharge_max"]) for s in storage)
+        scale = min(1.0, POI / storage_rated)
+        return {s: value * scale for s, value in seasonal.items()}
 
-    if "analysis.RA_hour" not in ho.df.columns:
-        add_RA_hour_columns(ho, zone, region)
+    add_RA_hour_columns(ho, zone, region)
+    if ho.df["analysis.RA_hour"].isna().any():
+        raise ValueError(
+            "RA-hour data does not cover the whole simulation (see RA_hours_coverage_utc)."
+        )
+    in_RA_hour = ho.df["analysis.RA_hour"].to_numpy() == 1
     generators = [c for c, resource_class in classes.items() if resource_class in ("solar", "wind")]
-    frame = pd.DataFrame({g: _get_column(ho, f"{g}.power_hypothetical") for g in generators})
+    frame = pd.DataFrame(
+        {g: _get_column(ho, f"{g}.power_hypothetical")[in_RA_hour] for g in generators}
+    )
     frame["available"] = 0.0
     for s in storage:
         column = (storage_available_columns or {}).get(s)
         if column is None:
             frame["available"] += float(h_dict[s]["power_discharge_max"])
         else:
-            frame["available"] += np.maximum(_get_column(ho, column), 0.0)
-    frame["hour"] = pd.DatetimeIndex(ho.df["time_utc"]).floor("h")
-    frame["season"] = ho.df["analysis.season"].to_numpy()
-    in_RA_hour = ho.df["analysis.RA_hour"].to_numpy() == 1
-    hourly = frame[in_RA_hour].groupby(["hour", "season"]).mean()
+            frame["available"] += np.maximum(_get_column(ho, column)[in_RA_hour], 0.0)
+    frame["hour"] = pd.DatetimeIndex(ho.df.loc[in_RA_hour, "time_utc"]).floor("h")
+    frame["season"] = ho.df.loc[in_RA_hour, "analysis.season"].to_numpy()
+    hourly = frame.groupby(["hour", "season"]).mean()
 
-    POI = float(h_dict["plant"]["interconnect_limit"])
     total = hourly[generators].sum(axis=1)
     share = (hourly[component] / total.where(total > 0)).fillna(0.0)
     capped = share * np.minimum(total, np.maximum(POI - hourly["available"], 0.0))
