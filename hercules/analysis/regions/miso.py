@@ -114,10 +114,10 @@ def compute_capacity_accredited_seasonal_MW(
     """Return MISO accredited capacity by season (MW), with hourly availability at a shared POI.
 
     Starts from the class-level value (``capacity_market``). MISO limits availability by hour,
-    with storage served first. Storage keeps its class-level value, scaled by
-    ``min(1, POI / sum of storage power_discharge_max)`` when several storage components share
-    the POI. A generator sharing the POI with storage is scaled, per season, over the RA hours
-    in the simulation by
+    with storage served first. Storage is accredited on its uncapped ``power_discharge_max``
+    scaled by ``min(1, POI / sum of storage power_discharge_max)``, so storage components
+    share the POI once. A generator sharing the POI with storage is scaled, per season, over
+    the RA hours in the simulation by
 
         ratio = sum_h min(P_h, max(POI - A_h, 0)) / sum_h min(P_h, POI)
 
@@ -157,8 +157,10 @@ def compute_capacity_accredited_seasonal_MW(
     POI = float(plant["interconnect_limit"]) / float(plant.get("efficiency_bus_to_poi", 1.0))
     if component in storage:
         storage_rated = sum(float(h_dict[s]["power_discharge_max"]) for s in storage)
-        scale = min(1.0, POI / storage_rated)
-        return {s: value * scale for s, value in seasonal.items()}
+        rating = float(h_dict[component]["power_discharge_max"])
+        allocated_MW = rating * min(1.0, POI / storage_rated) / 1000.0
+        fractions = region["accreditation_fraction"]["battery"]
+        return {s: fractions[s] * allocated_MW for s in region["seasons"]}
 
     add_RA_hour_columns(ho, zone, region)
     if ho.df["analysis.RA_hour"].isna().any():

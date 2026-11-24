@@ -116,6 +116,18 @@ def test_miso_shared_POI_bus_side_and_multiple_storage(tmp_path):
     assert battery["summer"] == pytest.approx(fractions["battery"]["summer"] * 0.1 * 0.625)
 
 
+def test_miso_oversized_storage_capped_at_POI_once(tmp_path):
+    # A 200 kW battery behind a 100 kW POI is accredited on 100 kW, not 50 kW.
+    h_dict = {
+        "plant": {"interconnect_limit": 100.0},
+        "battery": {"component_type": "BatteryReservoir", "power_discharge_max": 200.0},
+    }
+    ho = build_hercules_output(tmp_path, {"battery.power": [0.0]}, h_dict)
+    fractions = load_region("miso")["accreditation_fraction"]
+    battery = miso.compute_capacity_accredited_seasonal_MW(ho, 8, "battery")
+    assert battery["summer"] == pytest.approx(fractions["battery"]["summer"] * 0.1)
+
+
 def test_miso_shared_POI_outside_RA_coverage_raises(tmp_path):
     # Without RA-hour data the shared-POI rule cannot be applied.
     start = pd.Timestamp("2100-06-19T20:00Z").timestamp()
