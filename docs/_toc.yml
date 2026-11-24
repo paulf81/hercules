@@ -42,7 +42,6 @@ parts:
     - file: analysis
     - file: analysis_regions
     - file: analysis_enpax
-    - file: analysis_crosswalk
   - caption: Inputs
     chapters:
     - file: hercules_input
